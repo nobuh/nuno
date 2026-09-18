@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>nuno kernel</title>
+  <style>
+    body {
+      background-color: #050505;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      font-family: monospace;
+    }
+    canvas {
+      border: 2px solid #333;
+      background-color: #000;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <h1>nuno: Non Unix Native Operations</h1>
+  <canvas id="display" width="640" height="400"></canvas>
+    <script>
+    const COLS = 80;
+    const ROWS = 25;
+    const CHAR_WIDTH = 8;  // 640 / 80
+    const CHAR_HEIGHT = 16; // 400 / 25
+
+    const canvas = document.getElementById('display');
+    const ctx = canvas.getContext('2d');
+    ctx.font = '13px "Source Code Pro", monospace';
+    ctx.textBaseline = 'top';
+
+    const COLOR_PALETTE = [
+      "#000000", "#CD0000", "#00CD00", "#CDCD00",
+      "#0000EE", "#CD00CD", "#00CDCD", "#E5E5E5",
+      "#7F7F7F", "#FF0000", "#00FF00", "#FFFF00",
+      "#5C5CFF", "#FF00FF", "#00FFFF", "#FFFFFF"
+    ];
+
+    // デバッグ用にグローバル変数として宣言
+    window.wasmInstance = null;
+    window.mem = null;
+
+    window.renderVRAM = function() {
+      if (!window.mem) return;
+
+      // 1. 画面クリア
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const textBuffer = window.mem.subarray(0x8104, 0x8104 + 2000);
+      const attrBuffer = window.mem.subarray(0x88D4, 0x88D4 + 2000);
+
+      // 2. VRAMの全文字を描画
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const idx = y * COLS + x;
+          const charCode = textBuffer[idx];
+          const attr = attrBuffer[idx];
+
+          if (charCode === 0) continue; // 空白スキップ
+
+          const fg = COLOR_PALETTE[attr & 0x0F] || "#FFFFFF";
+          const bg = COLOR_PALETTE[(attr >> 4) & 0x07] || "#000000";
+
+          const drawX = x * CHAR_WIDTH;
+          const drawY = y * CHAR_HEIGHT;
+
+          // 背景色
+          if ((attr >> 4) & 0x07) {
+            ctx.fillStyle = bg;
+            ctx.fillRect(drawX, drawY, CHAR_WIDTH, CHAR_HEIGHT);
+          }
+
+          // 文字
+          ctx.fillStyle = fg;
+          ctx.fillText(String.fromCharCode(charCode), drawX + 1, drawY + 2);
+        }
+      }
+
+      console.log("renderVRAM 実行完了");
+    };
+
+    async function init() {
+      try {
+        const response = await fetch('shell.wasm'); // ※ビルドしたwasmファイル名
+        const bytes = await response.arrayBuffer();
+        
+        // Wasm インスタンスの作成
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        
+        // グローバルに保持
+        window.wasmInstance = instance;
+        window.mem = new Uint8Array(instance.exports.memory.buffer);
+
+        console.log("Wasm ロード完了. メモリサイズ:", window.mem.length);
+
+        // 1. Wasm の初期化を実行 (_start)
+        if (instance.exports._start) {
+          instance.exports._start();
+          console.log("_start() 実行完了");
+        }
+
+        // 2. 描画テストを実行
+        window.renderVRAM();
+
+      } catch (err) {
+        console.error("初期化エラー:", err);
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
